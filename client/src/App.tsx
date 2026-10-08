@@ -50,10 +50,12 @@ function FiltersBar({
   filters,
   onChange,
   onClear,
+  resetKey,
 }: {
   filters: Filters;
   onChange: (f: Filters) => void;
   onClear: () => void;
+  resetKey: number;
 }) {
   // Free-text year input: only propagate valid-or-empty values to the parent
   // filter so an out-of-range year can never reach the API (server 400s it too).
@@ -69,6 +71,14 @@ function FiltersBar({
       lastPropagated.current = filters.vintage;
     }
   }, [filters.vintage]);
+
+  useEffect(() => {
+    // Explicit reset signal: Clear must also wipe an invalid (unpropagated)
+    // local input, which the prop comparison above cannot detect.
+    setVintageInput('');
+    setVintageHint(null);
+    lastPropagated.current = '';
+  }, [resetKey]);
 
   const handleVintageChange = (v: string) => {
     setVintageInput(v);
@@ -439,6 +449,7 @@ export default function App() {
   const [credits, setCredits] = useState<CreditSummary[]>([]);
   const [totals, setTotals] = useState({ VERIFIED: 0, NEEDS_REVIEW: 0, REJECTED: 0 });
   const [filters, setFilters] = useState<Filters>({ verdict: '', registry: '', vintage: '' });
+  const [filterResetKey, setFilterResetKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -525,7 +536,11 @@ export default function App() {
                 <FiltersBar
                   filters={filters}
                   onChange={setFilters}
-                  onClear={() => setFilters({ verdict: '', registry: '', vintage: '' })}
+                  onClear={() => {
+                    setFilters({ verdict: '', registry: '', vintage: '' });
+                    setFilterResetKey((k) => k + 1);
+                  }}
+                  resetKey={filterResetKey}
                 />
               </div>
               <div className="mt-4">
