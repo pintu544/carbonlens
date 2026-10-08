@@ -83,3 +83,26 @@ export function fetchCredit(id: string): Promise<CreditDetailResponse> {
 export function verifyCredit(id: string): Promise<{ verdict: Verdict; findings: Finding[] }> {
   return request(`/api/credits/${encodeURIComponent(id)}/verify`, { method: 'POST' });
 }
+
+export interface NewCredit {
+  id: string;
+  registry: string;
+  projectId: string;
+  projectName: string;
+  vintage: number;
+  serialStart: number;
+  serialEnd: number;
+  quantityTco2e: number;
+  methodology: string;
+  standard: string;
+  proponent: string;
+  sourceDocHash: string;
+}
+
+export function createCredit(credit: NewCredit): Promise<{ id: string }> {
+  return request<{ id: string }>('/api/credits', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credit),
+  });
+}

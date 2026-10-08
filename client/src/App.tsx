@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  createCredit,
   fetchCredit,
   fetchCredits,
   verifyCredit,
@@ -245,6 +246,195 @@ function CreditDetailView({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
+const EMPTY_CREDIT_FORM = {
+  id: '',
+  registry: 'VCS-FIXTURE',
+  projectId: '',
+  projectName: '',
+  vintage: '',
+  serialStart: '',
+  serialEnd: '',
+  quantityTco2e: '',
+  methodology: '',
+  standard: '',
+  proponent: '',
+  sourceDocHash: '',
+};
+
+function TextField({
+  label,
+  value,
+  onChange,
+  error,
+  placeholder,
+  inputMode,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+  placeholder?: string;
+  inputMode?: 'numeric' | 'decimal' | 'text';
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-slate-400">
+      {label}
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        className={`rounded-md border bg-slate-900 px-3 py-2 text-sm text-slate-100 ${
+          error ? 'border-red-500/60' : 'border-slate-700'
+        }`}
+      />
+      {error && <span className="text-xs text-red-300">{error}</span>}
+    </label>
+  );
+}
+
+function validateCreditForm(f: typeof EMPTY_CREDIT_FORM): Record<string, string> {
+  const e: Record<string, string> = {};
+  for (const k of ['id', 'registry', 'projectId', 'projectName'] as const) {
+    if (!f[k].trim()) e[k] = 'Required';
+  }
+  if (!isValidVintageInput(f.vintage)) {
+    e.vintage = `Enter a 4-digit year ${MIN_VINTAGE_YEAR}–${MAX_VINTAGE_YEAR}`;
+  }
+  if (!/^\d+$/.test(f.serialStart)) e.serialStart = 'Enter a whole number';
+  if (!/^\d+$/.test(f.serialEnd)) e.serialEnd = 'Enter a whole number';
+  if (
+    /^\d+$/.test(f.serialStart) &&
+    /^\d+$/.test(f.serialEnd) &&
+    Number(f.serialEnd) < Number(f.serialStart)
+  ) {
+    e.serialEnd = 'Must be ≥ serial start';
+  }
+  const q = Number(f.quantityTco2e);
+  if (f.quantityTco2e.trim() === '' || Number.isNaN(q) || q <= 0) {
+    e.quantityTco2e = 'Enter a quantity greater than 0';
+  }
+  return e;
+}
+
+async function hashSourceDoc(canonical: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Manual credit entry (SPEC FR-1). Small, visually consistent with the dashboard.
+function AddCreditForm({ onAdded }: { onAdded: () => void }) {
+  const [form, setForm] = useState(EMPTY_CREDIT_FORM);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const set =
+    (k: keyof typeof EMPTY_CREDIT_FORM) =>
+    (v: string): void => {
+      setForm((f) => ({ ...f, [k]: v }));
+      setFieldErrors((errs) => {
+        const next = { ...errs };
+        delete next[k];
+        return next;
+      });
+    };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const errs = validateCreditForm(form);
+    setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setSubmitting(true);
+    setServerError(null);
+    try {
+      let sourceDocHash = form.sourceDocHash.trim();
+      if (!sourceDocHash) {
+        // Deterministic fallback: same fields → same hash, reproducible.
+        sourceDocHash = await hashSourceDoc(
+          JSON.stringify([
+            form.id.trim(),
+            form.registry.trim(),
+            form.projectId.trim(),
+            Number(form.vintage),
+            Number(form.serialStart),
+            Number(form.serialEnd),
+            Number(form.quantityTco2e),
+          ])
+        );
+      }
+      await createCredit({
+        id: form.id.trim(),
+        registry: form.registry.trim(),
+        projectId: form.projectId.trim(),
+        projectName: form.projectName.trim(),
+        vintage: Number(form.vintage),
+        serialStart: Number(form.serialStart),
+        serialEnd: Number(form.serialEnd),
+        quantityTco2e: Number(form.quantityTco2e),
+        methodology: form.methodology.trim(),
+        standard: form.standard.trim(),
+        proponent: form.proponent.trim(),
+        sourceDocHash,
+      });
+      setForm(EMPTY_CREDIT_FORM);
+      onAdded();
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : 'Failed to create credit');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-5"
+    >
+      <h2 className="text-lg font-semibold">Add credit</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Manual entry (SPEC FR-1). The credit is created as a draft — open its detail view to run
+        verification.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <TextField label="Credit ID" value={form.id} onChange={set('id')} error={fieldErrors.id} placeholder="CR-2026-025" />
+        <TextField label="Registry" value={form.registry} onChange={set('registry')} error={fieldErrors.registry} />
+        <TextField label="Project ID" value={form.projectId} onChange={set('projectId')} error={fieldErrors.projectId} placeholder="VCS-4821" />
+        <TextField label="Project name" value={form.projectName} onChange={set('projectName')} error={fieldErrors.projectName} />
+        <TextField label="Vintage" value={form.vintage} onChange={set('vintage')} error={fieldErrors.vintage} placeholder="2024" inputMode="numeric" />
+        <TextField label="Serial start" value={form.serialStart} onChange={set('serialStart')} error={fieldErrors.serialStart} inputMode="numeric" />
+        <TextField label="Serial end" value={form.serialEnd} onChange={set('serialEnd')} error={fieldErrors.serialEnd} inputMode="numeric" />
+        <TextField label="Quantity (tCO₂e)" value={form.quantityTco2e} onChange={set('quantityTco2e')} error={fieldErrors.quantityTco2e} inputMode="decimal" />
+        <TextField label="Methodology" value={form.methodology} onChange={set('methodology')} placeholder="VM0042" />
+        <TextField label="Standard" value={form.standard} onChange={set('standard')} placeholder="VCS v4.5" />
+        <TextField label="Proponent" value={form.proponent} onChange={set('proponent')} />
+        <TextField
+          label="Source doc hash"
+          value={form.sourceDocHash}
+          onChange={set('sourceDocHash')}
+          placeholder="sha256 — blank = auto-generated"
+        />
+      </div>
+      {serverError && (
+        <p className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          {serverError}
+        </p>
+      )}
+      <div className="mt-4">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+        >
+          {submitting ? 'Adding…' : 'Add credit'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function App() {
   const [credits, setCredits] = useState<CreditSummary[]>([]);
   const [totals, setTotals] = useState({ VERIFIED: 0, NEEDS_REVIEW: 0, REJECTED: 0 });
@@ -252,6 +442,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
 
   // Header totals always reflect the full ledger, not the active filters.
   const loadTotals = useCallback(() => {
@@ -313,11 +504,30 @@ export default function App() {
             <CreditDetailView id={selectedId} onBack={() => setSelectedId(null)} />
           ) : (
             <>
-              <FiltersBar
-                filters={filters}
-                onChange={setFilters}
-                onClear={() => setFilters({ verdict: '', registry: '', vintage: '' })}
-              />
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setShowForm((s) => !s)}
+                  className="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                >
+                  {showForm ? 'Close form' : '+ Add credit'}
+                </button>
+              </div>
+              {showForm && (
+                <AddCreditForm
+                  onAdded={() => {
+                    setShowForm(false);
+                    load(filters);
+                    loadTotals();
+                  }}
+                />
+              )}
+              <div className="mt-4">
+                <FiltersBar
+                  filters={filters}
+                  onChange={setFilters}
+                  onClear={() => setFilters({ verdict: '', registry: '', vintage: '' })}
+                />
+              </div>
               <div className="mt-4">
                 {loading ? (
                   <p className="text-sm text-slate-400">Loading credits…</p>
