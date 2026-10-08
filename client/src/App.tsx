@@ -537,16 +537,33 @@ export default function App() {
                   </div>
                 ) : credits.length === 0 ? (
                   <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-8 text-center">
-                    <p className="text-sm text-slate-300">No credits in the database yet.</p>
-                    <p className="mt-2 text-sm text-slate-500">
-                      The server seeds demo fixtures automatically on boot — restart it with{' '}
-                      <code className="font-mono text-slate-400">npm run dev</code> (or run{' '}
-                      <code className="font-mono text-slate-400">npm run seed</code>), then{' '}
-                      <button onClick={() => load(filters)} className="underline">
-                        retry
-                      </button>
-                      .
-                    </p>
+                    {filters.verdict || filters.registry || filters.vintage ? (
+                      <>
+                        <p className="text-sm text-slate-300">No credits match the current filters.</p>
+                        <p className="mt-2 text-sm text-slate-500">
+                          <button
+                            onClick={() => setFilters({ verdict: '', registry: '', vintage: '' })}
+                            className="underline"
+                          >
+                            Clear filters
+                          </button>{' '}
+                          to see all credits.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm text-slate-300">No credits in the database yet.</p>
+                        <p className="mt-2 text-sm text-slate-500">
+                          The server seeds demo fixtures automatically on boot — restart it with{' '}
+                          <code className="font-mono text-slate-400">npm run dev</code> (or run{' '}
+                          <code className="font-mono text-slate-400">npm run seed</code>), then{' '}
+                          <button onClick={() => load(filters)} className="underline">
+                            retry
+                          </button>
+                          .
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
