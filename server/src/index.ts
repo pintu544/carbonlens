@@ -4,6 +4,8 @@ import 'dotenv/config';
 import { migrate, pool } from './db.js';
 import { loadDataset, seedCredits, seedVerifications } from './seed.js';
 import { creditsRouter } from './routes/credits.js';
+import { chainRouter } from './routes/chain.js';
+import { startChainWorker } from './chain.js';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -17,6 +19,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/credits', creditsRouter);
+app.use('/api/chain', chainRouter);
 
 async function boot(): Promise<void> {
   // Idempotent schema + seed on every boot (deploy skill rule 5: the app owns
@@ -26,6 +29,10 @@ async function boot(): Promise<void> {
   const c = await seedCredits(dataset.credits);
   const v = await seedVerifications(dataset);
   console.log(`boot seed: ${c.inserted} credits, ${v.inserted} verifications inserted`);
+
+  // Async Amoy anchoring worker (no-op when the chain is unconfigured;
+  // verification works with zero chain access per NFR-2).
+  startChainWorker();
 
   app.listen(PORT, () => {
     console.log(`carbonlens-server listening on :${PORT}`);

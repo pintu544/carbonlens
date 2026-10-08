@@ -9,6 +9,19 @@ import {
   runVerification,
   type CreditRow,
 } from '../verifications.js';
+import {
+  AMOYSCAN_TX_URL,
+  chainStatus,
+  creditIdHash,
+  enqueueJob,
+  findAnchorTx,
+  getOpenJob,
+  isChainConfigured,
+  kickChainWorker,
+  readRecord,
+  withTimeout,
+  type AnchorJob,
+} from '../chain.js';
 
 export const creditsRouter = Router();
 
@@ -50,6 +63,40 @@ const asyncHandler =
       res.status(500).json({ error: 'internal error' });
     });
   };
+
+function toAnchorReceipt(r: Record<string, any>) {
+  return {
+    creditIdHash: r.credit_id_hash,
+    creditId: r.credit_id,
+    txHash: r.tx_hash,
+    blockNumber: r.block_number !== null && r.block_number !== undefined ? Number(r.block_number) : null,
+    network: r.network,
+    verdict: r.verdict,
+    retired: Boolean(r.retired),
+    retireTxHash: r.retire_tx_hash ?? null,
+    retireAmoyScanUrl: r.retire_tx_hash ? AMOYSCAN_TX_URL(r.retire_tx_hash) : null,
+    retiredAt: r.retired_at ?? null,
+    amoyScanUrl: AMOYSCAN_TX_URL(r.tx_hash),
+    createdAt: r.created_at,
+  };
+}
+
+function toJob(j: AnchorJob) {
+  return {
+    id: j.id,
+    creditId: j.credit_id,
+    jobType: j.job_type,
+    status: j.status,
+    attempts: j.attempts,
+    lastError: j.last_error,
+    txHash: j.tx_hash,
+    amoyScanUrl: j.tx_hash ? AMOYSCAN_TX_URL(j.tx_hash) : null,
+    createdAt: j.created_at,
+    updatedAt: j.updated_at,
+  };
+}
+
+const VERDICT_NAME: Record<number, string> = { 1: 'VERIFIED', 2: 'NEEDS_REVIEW', 3: 'REJECTED' };
 
 // GET /api/credits?verdict=&registry=&vintage=
 creditsRouter.get(
@@ -101,12 +148,20 @@ creditsRouter.get(
       res.status(404).json({ error: 'credit not found' });
       return;
     }
-    const [findings, verification, receipt] = await Promise.all([
+    const [findings, verification, receipt, job] = await Promise.all([
       getFindings(row.id),
       getLatestVerification(row.id),
       pool.query('SELECT * FROM anchor_receipts WHERE credit_id = $1', [row.id]).then((r) => r.rows[0] ?? null),
+      getOpenJob(row.id),
     ]);
-    res.json({ credit: toCreditDetail(row), findings, verification, anchorReceipt: receipt });
+    res.json({
+      credit: toCreditDetail(row),
+      findings,
+      verification,
+      anchorReceipt: receipt ? toAnchorReceipt(receipt) : null,
+      anchorJob: job ? toJob(job) : null,
+      chain: chainStatus(),
+    });
   })
 );
 
@@ -190,5 +245,112 @@ creditsRouter.post(
     }
     const result = await runVerification(row.id, 'api');
     res.json({ verdict: result.verdict, findings: result.findings });
+  })
+);
+
+// POST /api/credits/:id/anchor → queues an Amoy anchor tx.
+// 202 { status: 'pending', job } — the worker mines it async; the UI polls the
+// detail endpoint. 409 { receipt } if already anchored (off-chain guard first,
+// then an on-chain pre-check). 404 / 422 / 503 as appropriate.
+creditsRouter.post(
+  '/:id/anchor',
+  asyncHandler(async (req, res) => {
+    const row = await getCredit(req.params.id);
+    if (!row) {
+      res.status(404).json({ error: 'credit not found' });
+      return;
+    }
+    if (!isChainConfigured()) {
+      res.status(503).json({ error: 'on-chain anchoring is not configured on this server' });
+      return;
+    }
+    // FR-5, off-chain enforcement: a recorded receipt rejects immediately.
+    const rec = await pool.query('SELECT * FROM anchor_receipts WHERE credit_id = $1', [row.id]);
+    if (rec.rows.length > 0) {
+      res.status(409).json({ error: 'credit already anchored', receipt: toAnchorReceipt(rec.rows[0]) });
+      return;
+    }
+    const verification = await getLatestVerification(row.id);
+    if (!verification) {
+      res.status(422).json({ error: 'credit has no verification to anchor' });
+      return;
+    }
+    // FR-5, second layer: the chain itself may hold a record our DB missed
+    // (anchored outside this API). Bounded so the request never blocks on chain.
+    const idHash = creditIdHash(row.id);
+    try {
+      const record = await withTimeout(readRecord(idHash), 5_000, 'anchor pre-check');
+      if (record.exists) {
+        const found = await withTimeout(findAnchorTx(idHash), 10_000, 'anchor tx recovery').catch(
+          () => null
+        );
+        if (found) {
+          await pool.query(
+            `INSERT INTO anchor_receipts (credit_id_hash, credit_id, tx_hash, block_number, network, verdict)
+             VALUES ($1, $2, $3, $4, 'amoy', $5)
+             ON CONFLICT (credit_id_hash) DO NOTHING`,
+            [idHash, row.id, found.txHash, found.blockNumber, verification.verdict]
+          );
+          await pool.query(`UPDATE credits SET status = 'anchored' WHERE id = $1`, [row.id]);
+          const saved = await pool.query('SELECT * FROM anchor_receipts WHERE credit_id = $1', [
+            row.id,
+          ]);
+          res
+            .status(409)
+            .json({ error: 'credit already anchored on-chain', receipt: toAnchorReceipt(saved.rows[0]) });
+        } else {
+          res.status(409).json({
+            error: 'credit already anchored on-chain',
+            receipt: {
+              creditId: row.id,
+              creditIdHash: idHash,
+              txHash: null,
+              amoyScanUrl: null,
+              verdict: VERDICT_NAME[record.verdict ?? 0] ?? 'UNKNOWN',
+              note: 'record exists on-chain but the anchoring tx was not found in event logs',
+            },
+          });
+        }
+        return;
+      }
+    } catch (err) {
+      // RPC hiccup on the pre-check: fall through and queue; the worker
+      // re-checks on-chain before submitting. Never fail the request for this.
+      console.warn('[anchor] pre-check chain read failed, queueing anyway:', (err as Error).message);
+    }
+    const job = await enqueueJob(row.id, 'anchor');
+    kickChainWorker();
+    res.status(202).json({ status: job.status, job: toJob(job) });
+  })
+);
+
+// POST /api/credits/:id/retire → queues an Amoy retire tx (202 pending).
+// 409 when the credit is not anchored or already retired (FR-8).
+creditsRouter.post(
+  '/:id/retire',
+  asyncHandler(async (req, res) => {
+    const row = await getCredit(req.params.id);
+    if (!row) {
+      res.status(404).json({ error: 'credit not found' });
+      return;
+    }
+    if (!isChainConfigured()) {
+      res.status(503).json({ error: 'on-chain anchoring is not configured on this server' });
+      return;
+    }
+    const rec = await pool.query('SELECT * FROM anchor_receipts WHERE credit_id = $1', [row.id]);
+    if (rec.rows.length === 0) {
+      res.status(409).json({ error: 'credit is not anchored — anchor it before retiring' });
+      return;
+    }
+    if (rec.rows[0].retired) {
+      res
+        .status(409)
+        .json({ error: 'credit already retired', receipt: toAnchorReceipt(rec.rows[0]) });
+      return;
+    }
+    const job = await enqueueJob(row.id, 'retire');
+    kickChainWorker();
+    res.status(202).json({ status: job.status, job: toJob(job) });
   })
 );

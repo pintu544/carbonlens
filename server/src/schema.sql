@@ -57,3 +57,28 @@ CREATE TABLE IF NOT EXISTS anchor_receipts (
   verdict        TEXT NOT NULL,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Slice 2: retirement tracking on the receipt (idempotent alters).
+ALTER TABLE anchor_receipts ADD COLUMN IF NOT EXISTS retired BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE anchor_receipts ADD COLUMN IF NOT EXISTS retire_tx_hash TEXT;
+ALTER TABLE anchor_receipts ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+
+-- Slice 2: async chain-job queue (anchor / retire). Survives restarts; the
+-- background worker claims due jobs with exponential backoff.
+CREATE TABLE IF NOT EXISTS anchor_jobs (
+  id          SERIAL PRIMARY KEY,
+  credit_id   TEXT NOT NULL REFERENCES credits (id) ON DELETE CASCADE,
+  job_type    TEXT NOT NULL CHECK (job_type IN ('anchor', 'retire')),
+  status      TEXT NOT NULL DEFAULT 'pending'
+              CHECK (status IN ('pending', 'processing', 'confirmed', 'failed')),
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  last_error  TEXT,
+  tx_hash     TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- At most one open (pending/processing) job per credit+type: no double-queueing.
+CREATE UNIQUE INDEX IF NOT EXISTS anchor_jobs_open_one
+  ON anchor_jobs (credit_id, job_type)
+  WHERE status IN ('pending', 'processing');
