@@ -50,9 +50,13 @@ export function toBytes32(hex: string): string {
   return h.toLowerCase();
 }
 
-/** Exponential backoff between job attempts (seconds), capped at 30 min. */
+/**
+ * Exponential backoff between job attempts (seconds), capped at 30 min.
+ * Mirrors the claimNextJob SQL: fresh jobs (attempts = 0) run immediately.
+ */
 export function backoffSeconds(attempts: number): number {
-  return Math.min(5 * Math.pow(3, attempts), 1800);
+  if (attempts <= 0) return 0;
+  return Math.min(5 * Math.pow(3, attempts - 1), 1800);
 }
 
 export const MAX_ATTEMPTS = 12;
@@ -70,12 +74,19 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
 // Configuration / connection
 // ---------------------------------------------------------------------------
 
-const REGISTRY_ABI = [
+/** Minimal ABI — includes custom errors so ethers decodes revert reasons. */
+export const REGISTRY_ABI = [
   'function anchorVerification(bytes32 creditIdHash, bytes32 findingsHash, uint8 verdict) external',
   'function retireCredit(bytes32 creditIdHash) external',
   'function records(bytes32) external view returns (bytes32 findingsHash, uint8 verdict, uint64 timestamp, bool retired)',
   'event Anchored(bytes32 indexed creditIdHash, bytes32 findingsHash, uint8 verdict, uint64 timestamp)',
   'event Retired(bytes32 indexed creditIdHash, uint64 timestamp)',
+  // Custom errors are in the ABI so ethers decodes revert reasons —
+  // the worker matches /AlreadyAnchored/ etc. on these decoded names.
+  'error AlreadyAnchored(bytes32 creditIdHash)',
+  'error NotAnchored(bytes32 creditIdHash)',
+  'error AlreadyRetired(bytes32 creditIdHash)',
+  'error InvalidVerdict(uint8 verdict)',
 ] as const;
 
 export function isChainConfigured(): boolean {
@@ -232,7 +243,8 @@ async function claimNextJob(): Promise<AnchorJob | null> {
      WHERE id = (
        SELECT id FROM anchor_jobs
        WHERE status = 'pending'
-         AND updated_at <= NOW() - (LEAST(5 * POWER(3, attempts), 1800) || ' seconds')::interval
+         -- Fresh jobs (attempts = 0) run immediately; retries back off.
+         AND (attempts = 0 OR updated_at <= NOW() - (LEAST(5 * POWER(3, attempts - 1), 1800) || ' seconds')::interval)
        ORDER BY created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED

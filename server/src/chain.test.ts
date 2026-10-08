@@ -50,10 +50,11 @@ describe('VERDICT_CODE', () => {
 });
 
 describe('backoffSeconds', () => {
-  it('grows exponentially and caps at 30 minutes', () => {
-    expect(backoffSeconds(0)).toBe(5);
-    expect(backoffSeconds(1)).toBe(15);
-    expect(backoffSeconds(2)).toBe(45);
+  it('runs fresh jobs immediately, then grows exponentially, capped at 30 minutes', () => {
+    expect(backoffSeconds(0)).toBe(0);
+    expect(backoffSeconds(1)).toBe(5);
+    expect(backoffSeconds(2)).toBe(15);
+    expect(backoffSeconds(3)).toBe(45);
     expect(backoffSeconds(100)).toBe(1800);
   });
 
