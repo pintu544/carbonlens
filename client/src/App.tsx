@@ -145,7 +145,7 @@ function FiltersBar({
   );
 }
 
-function CreditDetailView({ id, onBack }: { id: string; onBack: () => void }) {
+function CreditDetailView({ id, onBack, onVerified }: { id: string; onBack: () => void; onVerified?: () => void }) {
   const [data, setData] = useState<CreditDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
@@ -164,7 +164,10 @@ function CreditDetailView({ id, onBack }: { id: string; onBack: () => void }) {
   const handleVerify = () => {
     setVerifying(true);
     verifyCredit(id)
-      .then(() => load())
+      .then(() => {
+        load();
+        onVerified?.();
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setVerifying(false));
   };
@@ -512,7 +515,7 @@ export default function App() {
 
         <div className="mt-6">
           {selectedId ? (
-            <CreditDetailView id={selectedId} onBack={() => setSelectedId(null)} />
+            <CreditDetailView id={selectedId} onBack={() => setSelectedId(null)} onVerified={loadTotals} />
           ) : (
             <>
               <div className="flex justify-end">

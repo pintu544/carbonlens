@@ -166,7 +166,16 @@ creditsRouter.post(
       }
       throw err;
     }
-    res.status(201).json({ id: b['id'] });
+    // FR-2/FR-3: every credit gets a deterministic verdict at creation time,
+    // so no credit is ever left without one.
+    let verdict: string | null = null;
+    try {
+      const result = await runVerification(String(b['id']), 'manual');
+      verdict = result.verdict;
+    } catch (err) {
+      console.error(`auto-verify failed for credit ${String(b['id'])}:`, err);
+    }
+    res.status(201).json({ id: b['id'], verdict });
   })
 );
 
