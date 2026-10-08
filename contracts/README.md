@@ -1,9 +1,15 @@
 # CarbonLensRegistry — contracts
 
 Minimal tamper-evident anchor registry for carbon-credit verification records,
-deployed to **Polygon Amoy testnet**. All verification logic lives off-chain;
+targeting **Polygon Amoy testnet** (not deployed yet — deploy with `npm run deploy:amoy`
+once the deployer wallet is funded). All verification logic lives off-chain;
 the contract records `(creditIdHash => findingsHash, verdict, timestamp)` exactly
 once and tracks a single retirement per credit.
+
+> **Known testnet limitation:** the contract is permissionless — anyone can
+> anchor or retire any credit. Accepted as a testnet tradeoff for the hackathon
+> (double-anchor is still prevented on-chain); a production deployment would
+> gate writes behind an allowlist.
 
 - `contracts/CarbonLensRegistry.sol` — the registry (~70 lines, two state-changing functions)
 - `scripts/deploy.ts` — Amoy deploy script (prints address + AmoyScan link)
