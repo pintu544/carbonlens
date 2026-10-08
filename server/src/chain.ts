@@ -118,9 +118,27 @@ interface ChainHandles {
   address: string;
 }
 
-function getHandles(): ChainHandles {
+/** Polygon Amoy chain ID — signing is refused on any other network (NFR-3). */
+export const AMOY_CHAIN_ID = 80002n;
+
+// Validated once per process: every handle after the first reuses this.
+let chainIdValidated = false;
+
+async function getHandles(): Promise<ChainHandles> {
   if (!isChainConfigured()) throw new Error('chain not configured');
   const provider = new ethers.JsonRpcProvider(process.env.AMOY_RPC_URL);
+  if (!chainIdValidated) {
+    // NFR-3 (no real funds, ever): never trust AMOY_RPC_URL blindly — fail
+    // fast with a clear error if it does not point at Polygon Amoy.
+    const network = await withTimeout(provider.getNetwork(), 5_000, 'chain ID check');
+    if (network.chainId !== AMOY_CHAIN_ID) {
+      throw new Error(
+        `refusing to sign: AMOY_RPC_URL points at chain ${network.chainId}, ` +
+          `not Polygon Amoy (${AMOY_CHAIN_ID}) — check AMOY_RPC_URL`
+      );
+    }
+    chainIdValidated = true;
+  }
   const wallet = new ethers.Wallet(process.env.DEPLOYER_PRIVATE_KEY as string, provider);
   const address = process.env.CONTRACT_ADDRESS as string;
   const contract = new ethers.Contract(address, REGISTRY_ABI, wallet);
@@ -137,7 +155,7 @@ export interface OnChainRecord {
 
 /** Read-only view call — fast, never sends a transaction. */
 export async function readRecord(idHash: string): Promise<OnChainRecord> {
-  const { contract } = getHandles();
+  const { contract } = await getHandles();
   const r = await withTimeout(contract.records(idHash), 20_000, 'records() view call');
   const timestamp = r.timestamp as bigint;
   return {
@@ -157,7 +175,7 @@ export async function readRecord(idHash: string): Promise<OnChainRecord> {
 export async function findAnchorTx(
   idHash: string
 ): Promise<{ txHash: string; blockNumber: number } | null> {
-  const { contract } = getHandles();
+  const { contract } = await getHandles();
   const events = await withTimeout(
     contract.queryFilter(contract.filters.Anchored(idHash)),
     30_000,
@@ -306,7 +324,7 @@ async function runAnchorJob(job: AnchorJob): Promise<void> {
     return;
   }
 
-  const { contract } = getHandles();
+  const { contract } = await getHandles();
   try {
     // On-chain idempotency: someone may have anchored outside our DB.
     const record = await readRecord(idHash);
@@ -382,7 +400,7 @@ async function runRetireJob(job: AnchorJob): Promise<void> {
     return;
   }
   const idHash = creditIdHash(job.credit_id);
-  const { contract } = getHandles();
+  const { contract } = await getHandles();
   try {
     const record = await readRecord(idHash);
     if (!record.exists) {
