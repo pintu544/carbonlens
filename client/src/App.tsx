@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  anchorCredit,
   createCredit,
   fetchCredit,
   fetchCredits,
+  retireCredit,
   verifyCredit,
+  type AnchorJobInfo,
+  type AnchorReceipt,
   type CreditDetailResponse,
   type CreditSummary,
   type Filters,
@@ -149,6 +153,9 @@ function CreditDetailView({ id, onBack, onVerified }: { id: string; onBack: () =
   const [data, setData] = useState<CreditDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [anchoring, setAnchoring] = useState(false);
+  const [retiring, setRetiring] = useState(false);
+  const [chainMsg, setChainMsg] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -161,6 +168,16 @@ function CreditDetailView({ id, onBack, onVerified }: { id: string; onBack: () =
     load();
   }, [load]);
 
+  // While an anchor/retire job is pending, poll until it confirms (NFR-2:
+  // the UI never blocks on chain calls — it shows the pending state).
+  const jobStatus = data?.anchorJob?.status;
+  useEffect(() => {
+    if (jobStatus === 'pending' || jobStatus === 'processing') {
+      const t = setInterval(load, 5000);
+      return () => clearInterval(t);
+    }
+  }, [jobStatus, load]);
+
   const handleVerify = () => {
     setVerifying(true);
     verifyCredit(id)
@@ -170,6 +187,47 @@ function CreditDetailView({ id, onBack, onVerified }: { id: string; onBack: () =
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setVerifying(false));
+  };
+
+  const handleAnchor = async () => {
+    setAnchoring(true);
+    setChainMsg(null);
+    try {
+      const { status, body } = await anchorCredit(id);
+      if (status === 202) {
+        setChainMsg('Anchor submitted — waiting for the transaction to mine…');
+      } else if (status === 409) {
+        // FR-5: double-anchor rejected with the existing receipt.
+        setChainMsg(body?.error ?? 'Credit is already anchored.');
+      } else {
+        setChainMsg(body?.error ?? `Anchor request failed (HTTP ${status}).`);
+      }
+    } catch (e) {
+      setChainMsg(e instanceof Error ? e.message : 'Anchor request failed.');
+    } finally {
+      setAnchoring(false);
+      load();
+    }
+  };
+
+  const handleRetire = async () => {
+    setRetiring(true);
+    setChainMsg(null);
+    try {
+      const { status, body } = await retireCredit(id);
+      if (status === 202) {
+        setChainMsg('Retire submitted — waiting for the transaction to mine…');
+      } else if (status === 409) {
+        setChainMsg(body?.error ?? 'Cannot retire this credit.');
+      } else {
+        setChainMsg(body?.error ?? `Retire request failed (HTTP ${status}).`);
+      }
+    } catch (e) {
+      setChainMsg(e instanceof Error ? e.message : 'Retire request failed.');
+    } finally {
+      setRetiring(false);
+      load();
+    }
   };
 
   if (error) {
@@ -255,7 +313,174 @@ function CreditDetailView({ id, onBack, onVerified }: { id: string; onBack: () =
           findings hash: {verification.findings_hash}
         </p>
       )}
+
+      <AnchorSection
+        receipt={data.anchorReceipt}
+        job={data.anchorJob}
+        chainConfigured={data.chain.configured}
+        contractUrl={data.chain.amoyScanAddressUrl}
+        anchoring={anchoring}
+        retiring={retiring}
+        chainMsg={chainMsg}
+        onAnchor={handleAnchor}
+        onRetire={handleRetire}
+      />
     </div>
+  );
+}
+
+function shortHash(h: string): string {
+  return h.length > 18 ? `${h.slice(0, 10)}…${h.slice(-8)}` : h;
+}
+
+function AnchorSection({
+  receipt,
+  job,
+  chainConfigured,
+  contractUrl,
+  anchoring,
+  retiring,
+  chainMsg,
+  onAnchor,
+  onRetire,
+}: {
+  receipt: AnchorReceipt | null;
+  job: AnchorJobInfo | null;
+  chainConfigured: boolean;
+  contractUrl: string | null;
+  anchoring: boolean;
+  retiring: boolean;
+  chainMsg: string | null;
+  onAnchor: () => void;
+  onRetire: () => void;
+}) {
+  const jobActive = job && (job.status === 'pending' || job.status === 'processing');
+  return (
+    <section className="mt-8 rounded-lg border border-slate-800 bg-slate-900/60 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold">On-chain anchoring</h3>
+        {contractUrl && (
+          <a
+            href={contractUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-sky-400 hover:text-sky-300"
+          >
+            CarbonLensRegistry contract ↗
+          </a>
+        )}
+      </div>
+
+      {!chainConfigured ? (
+        <p className="mt-2 text-sm text-slate-500">
+          On-chain anchoring is not configured on this server — verification works without it.
+        </p>
+      ) : receipt ? (
+        <div className="mt-3 space-y-2 text-sm">
+          <p>
+            <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
+              ANCHORED
+            </span>{' '}
+            {receipt.retired && (
+              <span className="inline-flex items-center rounded-full border border-slate-500/40 bg-slate-700/30 px-2.5 py-0.5 text-xs font-medium text-slate-300">
+                RETIRED
+              </span>
+            )}
+          </p>
+          <p className="text-slate-400">
+            Transaction{' '}
+            <a
+              href={receipt.amoyScanUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-xs text-sky-400 hover:text-sky-300"
+              title={receipt.txHash}
+            >
+              {shortHash(receipt.txHash)} ↗
+            </a>{' '}
+            <span className="text-slate-500">
+              (block {receipt.blockNumber ?? '—'} · {receipt.network})
+            </span>
+          </p>
+          {receipt.retired ? (
+            <p className="text-slate-400">
+              Retired{' '}
+              {receipt.retireAmoyScanUrl ? (
+                <a
+                  href={receipt.retireAmoyScanUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-xs text-sky-400 hover:text-sky-300"
+                  title={receipt.retireTxHash ?? ''}
+                >
+                  {shortHash(receipt.retireTxHash ?? '')} ↗
+                </a>
+              ) : (
+                <span className="text-slate-500">(retire tx recorded off-chain)</span>
+              )}
+            </p>
+          ) : (
+            <button
+              onClick={onRetire}
+              disabled={retiring || Boolean(jobActive)}
+              className="rounded-md border border-amber-500/40 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+            >
+              {retiring ? 'Submitting retire…' : 'Retire credit'}
+            </button>
+          )}
+        </div>
+      ) : jobActive ? (
+        <div className="mt-3 text-sm">
+          <p className="text-amber-300">
+            {job.jobType === 'retire' ? 'Retire' : 'Anchor'} {job.status}…
+            <span className="ml-2 text-slate-500">(attempt {job.attempts})</span>
+          </p>
+          {job.txHash ? (
+            <p className="mt-1 text-slate-400">
+              Transaction submitted — waiting for it to mine:{' '}
+              <span className="font-mono text-xs" title={job.txHash}>
+                {shortHash(job.txHash)}
+              </span>
+            </p>
+          ) : (
+            <p className="mt-1 text-slate-500">Queued — the worker will submit it shortly.</p>
+          )}
+          {job.lastError && (
+            <p className="mt-1 text-xs text-red-300/80">Last attempt: {job.lastError}</p>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3">
+          {job?.status === 'failed' && (
+            <p className="mt-1 text-xs text-red-300/80">
+              Last {job.jobType} failed: {job.lastError ?? 'unknown error'} — you can retry below.
+            </p>
+          )}
+          {job?.status === 'failed' && job.jobType === 'retire' ? (
+            <button
+              onClick={onRetire}
+              disabled={retiring}
+              className="rounded-md border border-amber-500/40 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+            >
+              {retiring ? 'Submitting retire…' : 'Retry retire'}
+            </button>
+          ) : (
+            <button
+              onClick={onAnchor}
+              disabled={anchoring}
+              className="rounded-md border border-sky-500/40 px-3 py-1.5 text-sm text-sky-300 hover:bg-sky-500/10 disabled:opacity-50"
+            >
+              {anchoring ? 'Submitting…' : 'Anchor verification'}
+            </button>
+          )}
+          <p className="mt-2 text-xs text-slate-500">
+            Anchors this verification to the CarbonLensRegistry contract on Polygon Amoy.
+          </p>
+        </div>
+      )}
+
+      {chainMsg && <p className="mt-3 text-sm text-slate-300">{chainMsg}</p>}
+    </section>
   );
 }
 

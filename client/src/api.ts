@@ -49,7 +49,44 @@ export interface CreditDetailResponse {
   credit: CreditDetail;
   findings: Finding[];
   verification: Verification | null;
-  anchorReceipt: unknown | null;
+  anchorReceipt: AnchorReceipt | null;
+  anchorJob: AnchorJobInfo | null;
+  chain: ChainStatus;
+}
+
+export interface AnchorReceipt {
+  creditIdHash: string;
+  creditId: string;
+  txHash: string;
+  blockNumber: number | null;
+  network: string;
+  verdict: string;
+  retired: boolean;
+  retireTxHash: string | null;
+  retireAmoyScanUrl: string | null;
+  retiredAt: string | null;
+  amoyScanUrl: string;
+  createdAt: string;
+}
+
+export interface AnchorJobInfo {
+  id: number;
+  creditId: string;
+  jobType: 'anchor' | 'retire';
+  status: 'pending' | 'processing' | 'confirmed' | 'failed';
+  attempts: number;
+  lastError: string | null;
+  txHash: string | null;
+  amoyScanUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChainStatus {
+  configured: boolean;
+  network: string;
+  contractAddress: string | null;
+  amoyScanAddressUrl: string | null;
 }
 
 export interface Filters {
@@ -105,4 +142,19 @@ export function createCredit(credit: NewCredit): Promise<{ id: string }> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(credit),
   });
+}
+
+/** Raw POST that surfaces non-2xx statuses (202 pending, 409 conflict) to the caller. */
+async function postRaw(path: string): Promise<{ status: number; body: any }> {
+  const res = await fetch(`${BASE}${path}`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, body };
+}
+
+export function anchorCredit(id: string): Promise<{ status: number; body: any }> {
+  return postRaw(`/api/credits/${encodeURIComponent(id)}/anchor`);
+}
+
+export function retireCredit(id: string): Promise<{ status: number; body: any }> {
+  return postRaw(`/api/credits/${encodeURIComponent(id)}/retire`);
 }
