@@ -32,7 +32,7 @@ async function boot(): Promise<void> {
 
   // Async Amoy anchoring worker (no-op when the chain is unconfigured;
   // verification works with zero chain access per NFR-2).
-  startChainWorker();
+  await startChainWorker();
 
   app.listen(PORT, () => {
     console.log(`carbonlens-server listening on :${PORT}`);

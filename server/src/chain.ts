@@ -477,12 +477,24 @@ async function processNextJob(): Promise<void> {
 }
 
 /** Start the background retry worker. No-op when the chain is unconfigured. */
-export function startChainWorker(): void {
+export async function startChainWorker(): Promise<void> {
   if (!isChainConfigured()) {
     console.log('[chain] not configured (AMOY_RPC_URL / DEPLOYER_PRIVATE_KEY / CONTRACT_ADDRESS) — anchor/retire disabled, verification unaffected');
     return;
   }
   if (workerTimer) return;
+  // claimNextJob only claims `pending` jobs, so a job orphaned in `processing`
+  // by a crash/restart would never be retried. Reclaim anything that has been
+  // stuck in `processing` for more than ~5 minutes (a healthy job either mines
+  // or requeues well within that window).
+  const reclaimed = await pool.query(
+    `UPDATE anchor_jobs SET status = 'pending', updated_at = NOW()
+     WHERE status = 'processing' AND updated_at < NOW() - INTERVAL '5 minutes'
+     RETURNING id`
+  );
+  if (reclaimed.rows.length > 0) {
+    console.log(`[chain] reclaimed ${reclaimed.rows.length} stuck job(s) to pending`);
+  }
   console.log('[chain] worker started — contract', process.env.CONTRACT_ADDRESS);
   workerTimer = setInterval(() => {
     void processNextJob();
