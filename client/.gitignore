@@ -1,1 +1,5 @@
 .vercel
+
+# tsc -b emits next to sources (no outDir in tsconfig); keep emitted artifacts out of git
+src/**/*.js
+tsconfig.tsbuildinfo
