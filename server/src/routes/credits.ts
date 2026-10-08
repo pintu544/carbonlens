@@ -276,12 +276,14 @@ creditsRouter.post(
       return;
     }
     // FR-5, second layer: the chain itself may hold a record our DB missed
-    // (anchored outside this API). Bounded so the request never blocks on chain.
+    // (anchored outside this API). Bounded to ~2s total per NFR-2 (the UI must
+    // never block on chain calls); a timeout here just queues the job, and the
+    // worker re-checks on-chain before submitting, so nothing is lost.
     const idHash = creditIdHash(row.id);
     try {
-      const record = await withTimeout(readRecord(idHash), 5_000, 'anchor pre-check');
+      const record = await withTimeout(readRecord(idHash), 1_200, 'anchor pre-check');
       if (record.exists) {
-        const found = await withTimeout(findAnchorTx(idHash), 10_000, 'anchor tx recovery').catch(
+        const found = await withTimeout(findAnchorTx(idHash), 600, 'anchor tx recovery').catch(
           () => null
         );
         if (found) {
