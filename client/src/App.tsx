@@ -206,10 +206,24 @@ function CreditDetailView({ id, onBack }: { id: string; onBack: () => void }) {
 
 export default function App() {
   const [credits, setCredits] = useState<CreditSummary[]>([]);
+  const [totals, setTotals] = useState({ VERIFIED: 0, NEEDS_REVIEW: 0, REJECTED: 0 });
   const [filters, setFilters] = useState<Filters>({ verdict: '', registry: '', vintage: '' });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Header totals always reflect the full ledger, not the active filters.
+  const loadTotals = useCallback(() => {
+    fetchCredits({ verdict: '', registry: '', vintage: '' })
+      .then((all) => {
+        setTotals({
+          VERIFIED: all.filter((c) => c.verdict === 'VERIFIED').length,
+          NEEDS_REVIEW: all.filter((c) => c.verdict === 'NEEDS_REVIEW').length,
+          REJECTED: all.filter((c) => c.verdict === 'REJECTED').length,
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   const load = useCallback((f: Filters) => {
     setLoading(true);
@@ -230,11 +244,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, load]);
 
-  const counts = {
-    VERIFIED: credits.filter((c) => c.verdict === 'VERIFIED').length,
-    NEEDS_REVIEW: credits.filter((c) => c.verdict === 'NEEDS_REVIEW').length,
-    REJECTED: credits.filter((c) => c.verdict === 'REJECTED').length,
-  };
+  useEffect(() => {
+    loadTotals();
+  }, [loadTotals]);
+
+  const counts = totals;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">

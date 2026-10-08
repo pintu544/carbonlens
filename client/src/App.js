@@ -57,10 +57,23 @@ function CreditDetailView({ id, onBack }) {
 }
 export default function App() {
     const [credits, setCredits] = useState([]);
+    const [totals, setTotals] = useState({ VERIFIED: 0, NEEDS_REVIEW: 0, REJECTED: 0 });
     const [filters, setFilters] = useState({ verdict: '', registry: '', vintage: '' });
     const [selectedId, setSelectedId] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    // Header totals always reflect the full ledger, not the active filters.
+    const loadTotals = useCallback(() => {
+        fetchCredits({ verdict: '', registry: '', vintage: '' })
+            .then((all) => {
+            setTotals({
+                VERIFIED: all.filter((c) => c.verdict === 'VERIFIED').length,
+                NEEDS_REVIEW: all.filter((c) => c.verdict === 'NEEDS_REVIEW').length,
+                REJECTED: all.filter((c) => c.verdict === 'REJECTED').length,
+            });
+        })
+            .catch(() => { });
+    }, []);
     const load = useCallback((f) => {
         setLoading(true);
         setError(null);
@@ -78,10 +91,9 @@ export default function App() {
         load(filters);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filters, load]);
-    const counts = {
-        VERIFIED: credits.filter((c) => c.verdict === 'VERIFIED').length,
-        NEEDS_REVIEW: credits.filter((c) => c.verdict === 'NEEDS_REVIEW').length,
-        REJECTED: credits.filter((c) => c.verdict === 'REJECTED').length,
-    };
+    useEffect(() => {
+        loadTotals();
+    }, [loadTotals]);
+    const counts = totals;
     return (_jsx("div", { className: "min-h-screen bg-slate-950 text-slate-100", children: _jsxs("div", { className: "mx-auto max-w-6xl px-4 py-8 sm:px-6", children: [_jsxs("header", { className: "flex flex-wrap items-baseline justify-between gap-2", children: [_jsxs("div", { children: [_jsx("h1", { className: "text-3xl font-bold tracking-tight", children: "CarbonLens" }), _jsx("p", { className: "mt-1 text-sm text-slate-400", children: "Carbon-credit verification and emissions-transparency dashboard" })] }), _jsxs("div", { className: "flex gap-4 text-sm", children: [_jsxs("span", { className: "text-emerald-300", children: [counts.VERIFIED, " verified"] }), _jsxs("span", { className: "text-amber-300", children: [counts.NEEDS_REVIEW, " need review"] }), _jsxs("span", { className: "text-red-300", children: [counts.REJECTED, " rejected"] })] })] }), _jsx("div", { className: "mt-6", children: selectedId ? (_jsx(CreditDetailView, { id: selectedId, onBack: () => setSelectedId(null) })) : (_jsxs(_Fragment, { children: [_jsx(FiltersBar, { filters: filters, onChange: setFilters, onClear: () => setFilters({ verdict: '', registry: '', vintage: '' }) }), _jsx("div", { className: "mt-4", children: loading ? (_jsx("p", { className: "text-sm text-slate-400", children: "Loading credits\u2026" })) : error ? (_jsxs("div", { className: "rounded-lg border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-300", children: ["Could not reach the API: ", error] })) : credits.length === 0 ? (_jsxs("div", { className: "rounded-lg border border-slate-800 bg-slate-900/60 p-8 text-center", children: [_jsx("p", { className: "text-sm text-slate-300", children: "No credits in the database yet." }), _jsxs("p", { className: "mt-2 text-sm text-slate-500", children: ["The server seeds demo fixtures automatically on boot \u2014 restart it with", ' ', _jsx("code", { className: "font-mono text-slate-400", children: "npm run dev" }), " (or run", ' ', _jsx("code", { className: "font-mono text-slate-400", children: "npm run seed" }), "), then", ' ', _jsx("button", { onClick: () => load(filters), className: "underline", children: "retry" }), "."] })] })) : (_jsx("ul", { className: "grid gap-3 sm:grid-cols-2 lg:grid-cols-3", children: credits.map((c) => (_jsx("li", { children: _jsxs("button", { onClick: () => setSelectedId(c.id), className: "block w-full rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-left hover:border-slate-600", children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "font-mono text-sm font-medium text-slate-200", children: c.id }), _jsx(VerdictBadge, { verdict: c.verdict })] }), _jsx("p", { className: "mt-1.5 truncate text-sm text-slate-400", children: c.projectName }), _jsxs("p", { className: "mt-1 text-xs text-slate-500", children: ["Vintage ", c.vintage, " \u00B7 ", c.quantityTco2e.toLocaleString(), " tCO\u2082e"] })] }) }, c.id))) })) })] })) })] }) }));
 }
