@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchCredit,
   fetchCredits,
@@ -38,6 +38,13 @@ function VerdictBadge({ verdict }: { verdict: Verdict | null }) {
   );
 }
 
+const MIN_VINTAGE_YEAR = 1900;
+const MAX_VINTAGE_YEAR = 2100;
+
+function isValidVintageInput(v: string): boolean {
+  return /^\d{4}$/.test(v) && Number(v) >= MIN_VINTAGE_YEAR && Number(v) <= MAX_VINTAGE_YEAR;
+}
+
 function FiltersBar({
   filters,
   onChange,
@@ -47,6 +54,36 @@ function FiltersBar({
   onChange: (f: Filters) => void;
   onClear: () => void;
 }) {
+  // Free-text year input: only propagate valid-or-empty values to the parent
+  // filter so an out-of-range year can never reach the API (server 400s it too).
+  const [vintageInput, setVintageInput] = useState(filters.vintage);
+  const [vintageHint, setVintageHint] = useState<string | null>(null);
+  const lastPropagated = useRef(filters.vintage);
+
+  useEffect(() => {
+    // Keep the local input in sync when the parent resets (e.g. Clear).
+    if (filters.vintage !== lastPropagated.current) {
+      setVintageInput(filters.vintage);
+      setVintageHint(null);
+      lastPropagated.current = filters.vintage;
+    }
+  }, [filters.vintage]);
+
+  const handleVintageChange = (v: string) => {
+    setVintageInput(v);
+    if (v === '') {
+      setVintageHint(null);
+      lastPropagated.current = '';
+      onChange({ ...filters, vintage: '' });
+    } else if (isValidVintageInput(v)) {
+      setVintageHint(null);
+      lastPropagated.current = v;
+      onChange({ ...filters, vintage: v });
+    } else {
+      setVintageHint(`Enter a 4-digit year ${MIN_VINTAGE_YEAR}–${MAX_VINTAGE_YEAR}`);
+    }
+  };
+
   return (
     <div className="flex flex-wrap items-end gap-3">
       <label className="flex flex-col gap-1 text-xs text-slate-400">
@@ -76,12 +113,16 @@ function FiltersBar({
       <label className="flex flex-col gap-1 text-xs text-slate-400">
         Vintage
         <input
-          value={filters.vintage}
-          onChange={(e) => onChange({ ...filters, vintage: e.target.value })}
+          value={vintageInput}
+          onChange={(e) => handleVintageChange(e.target.value)}
           placeholder="e.g. 2024"
           inputMode="numeric"
-          className="w-28 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+          aria-invalid={vintageHint !== null}
+          className={`w-28 rounded-md border bg-slate-900 px-3 py-2 text-sm text-slate-100 ${
+            vintageHint ? 'border-red-500/60' : 'border-slate-700'
+          }`}
         />
+        {vintageHint && <span className="text-xs text-red-300">{vintageHint}</span>}
       </label>
       <button
         onClick={onClear}

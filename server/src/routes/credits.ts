@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../db.js';
+import { parseVintageYear } from '../validate.js';
 import {
   getAllCredits,
   getCredit,
@@ -66,12 +67,12 @@ creditsRouter.get(
       conditions.push(`c.registry = $${params.length}`);
     }
     if (typeof vintage === 'string' && vintage) {
-      const y = Number(vintage);
-      if (!Number.isInteger(y)) {
-        res.status(400).json({ error: 'vintage must be an integer year' });
+      const parsed = parseVintageYear(vintage);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error });
         return;
       }
-      params.push(y);
+      params.push(parsed.year);
       conditions.push(`c.vintage = $${params.length}`);
     }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -119,7 +120,8 @@ function validateCreditBody(body: unknown): { ok: true; value: Record<string, un
       return { ok: false, error: `field '${f}' is required and must be a non-empty string` };
     }
   }
-  if (!Number.isInteger(b['vintage'])) return { ok: false, error: "field 'vintage' must be an integer year" };
+  const vintage = parseVintageYear(b['vintage']);
+  if (!vintage.ok) return { ok: false, error: `field 'vintage': ${vintage.error}` };
   if (!Number.isInteger(b['serialStart']) || !Number.isInteger(b['serialEnd'])) {
     return { ok: false, error: "fields 'serialStart' and 'serialEnd' must be integers" };
   }
