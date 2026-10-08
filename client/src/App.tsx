@@ -317,8 +317,8 @@ function CreditDetailView({ id, onBack, onVerified }: { id: string; onBack: () =
       <AnchorSection
         receipt={data.anchorReceipt}
         job={data.anchorJob}
-        chainConfigured={data.chain.configured}
-        contractUrl={data.chain.amoyScanAddressUrl}
+        chainConfigured={data.chain?.configured ?? false}
+        contractUrl={data.chain?.amoyScanAddressUrl ?? null}
         anchoring={anchoring}
         retiring={retiring}
         chainMsg={chainMsg}
