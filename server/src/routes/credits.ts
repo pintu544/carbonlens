@@ -234,6 +234,20 @@ creditsRouter.post(
   })
 );
 
+// DELETE /api/credits/:id → removes the credit and all dependent rows
+// (findings, verifications, anchor receipts/jobs cascade). 404 if missing.
+creditsRouter.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const result = await pool.query('DELETE FROM credits WHERE id = $1', [req.params.id]);
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'credit not found' });
+      return;
+    }
+    res.json({ deleted: req.params.id });
+  })
+);
+
 // POST /api/credits/:id/verify → runs engine, 200 { verdict, findings }; 404 if missing
 creditsRouter.post(
   '/:id/verify',
