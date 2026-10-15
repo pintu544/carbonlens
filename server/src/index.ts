@@ -1,7 +1,7 @@
 import cors from 'cors';
 import express from 'express';
 import 'dotenv/config';
-import { migrate, pool } from './db.js';
+import { ensureDatabase, migrate, pool } from './db.js';
 import { loadDataset, seedCredits, seedVerifications } from './seed.js';
 import { creditsRouter } from './routes/credits.js';
 import { chainRouter } from './routes/chain.js';
@@ -24,6 +24,7 @@ app.use('/api/chain', chainRouter);
 async function boot(): Promise<void> {
   // Idempotent schema + seed on every boot (deploy skill rule 5: the app owns
   // its schema; seed is upsert-safe and never overwrites user data).
+  await ensureDatabase();
   await migrate();
   const dataset = loadDataset();
   const c = await seedCredits(dataset.credits);
